@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <title>AR Viewer · Hiro Optimisé</title>
+
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Ajustements supplémentaires si nécessaire */
+        body { touch-action: none; }
+        canvas { display: block; }
+    </style>
+</head>
+<body class="m-0 overflow-hidden font-sans bg-black">
+
+    <!-- Statut en haut à droite -->
+    <div id="status"
+         class="fixed top-4 right-4 z-50 bg-black/70 text-green-400 px-4 py-2 rounded-full text-sm backdrop-blur-md shadow-lg">
+        📷 Caméra active · Hiro
+    </div>
+
+    <!-- Interface de contrôle en bas -->
+    <div id="ui"
+         class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center justify-center gap-2
+                bg-black/60 backdrop-blur-xl px-4 py-3 rounded-full shadow-2xl">
+        <label for="file-upload"
+               class="cursor-pointer bg-cyan-400 text-black font-bold px-5 py-2 rounded-full text-sm hover:bg-cyan-300 transition active:scale-95">
+            📁 Charger GLB
+        </label>
+        <input type="file" id="file-upload" accept=".glb,.gltf" class="hidden" />
+
+        <button id="reset-orientation-btn"
+                class="bg-white/15 text-white font-bold px-4 py-2 rounded-full text-sm backdrop-blur-sm hover:bg-white/25 transition active:scale-95">
+            ↺ Reset
+        </button>
+        <button id="small-btn"
+                class="bg-white/15 text-white font-bold px-4 py-2 rounded-full text-sm backdrop-blur-sm hover:bg-white/25 transition active:scale-95">
+            🔍 Petit
+        </button>
+        <button id="normal-btn"
+                class="bg-white/15 text-white font-bold px-4 py-2 rounded-full text-sm backdrop-blur-sm hover:bg-white/25 transition active:scale-95">
+            📏 Normal
+        </button>
+        <button id="big-btn"
+                class="bg-white/15 text-white font-bold px-4 py-2 rounded-full text-sm backdrop-blur-sm hover:bg-white/25 transition active:scale-95">
+            🔎 Grand
+        </button>
+    </div>
+
+    <!-- Scène AR avec paramètres de tracking optimisés -->
+    <a-scene embedded
+             arjs="trackingMethod: best;
+                   sourceType: webcam;
+                   detectionMode: mono_and_matrix;
+                   matrixCodeType: 3x3;
+                   maxDetectionRate: 30;
+                   canvasWidth: 640;
+                   canvasHeight: 480;
+                   debugUIEnabled: false;">
+        <!-- Marqueur Hiro -->
+        <a-marker preset="hiro" id="marker">
+            <!-- Modèle 3D avec gestion des gestes -->
+            <a-entity id="model"
+                      position="0 0 0"
+                      scale="0.5 0.5 0.5"
+                      gltf-model=""
+                      gesture-controls>
+            </a-entity>
+        </a-marker>
+        <a-entity camera></a-entity>
+    </a-scene>
+
+    <!-- Dépendances A-Frame et AR.js -->
+    <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+    <!-- Composant personnalisé : orbite + pincement -->
+    <script>
+        AFRAME.registerComponent('gesture-controls', {
+            init: function () {
+                this.rotationSensitivity = 0.005;
+                this.minScale = 0.1;
+                this.maxScale = 5.0;
+                this.initialScale = null;
+
+                this.onTouchStart = this.onTouchStart.bind(this);
+                this.onTouchMove = this.onTouchMove.bind(this);
+                this.onTouchEnd = this.onTouchEnd.bind(this);
+                this.onWheel = this.onWheel.bind(this);
+
+                this.canvas = this.el.sceneEl.canvas;
+                this.canvas.addEventListener('touchstart', this.onTouchStart, { passive: false });
+                this.canvas.addEventListener('touchmove', this.onTouchMove, { passive: false });
+                this.canvas.addEventListener('touchend', this.onTouchEnd);
+                this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
+
+                this.touches = {};
+                this.isOrbiting = false;
+                this.lastOrbitX = 0;
+                this.lastOrbitY = 0;
+                this.pinchStartDistance = null;
+            },
+
+            onTouchStart: function (e) {
+                e.preventDefault();
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const touch = e.changedTouches[i];
+                    this.touches[touch.identifier] = { x: touch.clientX, y: touch.clientY };
+                }
+                const active = Object.keys(this.touches).length;
+                if (active === 1) {
+                    const touch = e.changedTouches[0];
+                    this.isOrbiting = true;
+                    this.lastOrbitX = touch.clientX;
+                    this.lastOrbitY = touch.clientY;
+                } else if (active === 2) {
+                    this.isOrbiting = false;
+                    const ids = Object.keys(this.touches);
+                    const dx = this.touches[ids[0]].x - this.touches[ids[1]].x;
+                    const dy = this.touches[ids[0]].y - this.touches[ids[1]].y;
+                    this.pinchStartDistance = Math.hypot(dx, dy);
+                    this.initialScale = this.el.getAttribute('scale').x;
+                }
+            },
+
+            onTouchMove: function (e) {
+                e.preventDefault();
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const touch = e.changedTouches[i];
+                    if (this.touches[touch.identifier]) {
+                        this.touches[touch.identifier].x = touch.clientX;
+                        this.touches[touch.identifier].y = touch.clientY;
+                    }
+                }
+                const active = Object.keys(this.touches).length;
+                if (active === 1 && this.isOrbiting) {
+                    const touch = e.changedTouches[0];
+                    const deltaX = touch.clientX - this.lastOrbitX;
+                    const deltaY = touch.clientY - this.lastOrbitY;
+                    this.lastOrbitX = touch.clientX;
+                    this.lastOrbitY = touch.clientY;
+                    const rot = this.el.getAttribute('rotation');
+                    const newY = rot.y + deltaX * this.rotationSensitivity * 100;
+                    const newX = rot.x + deltaY * this.rotationSensitivity * 100;
+                    this.el.setAttribute('rotation', { x: newX, y: newY, z: rot.z });
+                } else if (active === 2 && this.pinchStartDistance !== null) {
+                    const ids = Object.keys(this.touches);
+                    const dx = this.touches[ids[0]].x - this.touches[ids[1]].x;
+                    const dy = this.touches[ids[0]].y - this.touches[ids[1]].y;
+                    const dist = Math.hypot(dx, dy);
+                    const factor = dist / this.pinchStartDistance;
+                    let newScale = this.initialScale * factor;
+                    newScale = Math.max(this.minScale, Math.min(this.maxScale, newScale));
+                    this.el.setAttribute('scale', { x: newScale, y: newScale, z: newScale });
+                }
+            },
+
+            onTouchEnd: function (e) {
+                e.preventDefault();
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    delete this.touches[e.changedTouches[i].identifier];
+                }
+                if (Object.keys(this.touches).length < 2) {
+                    this.pinchStartDistance = null;
+                    this.initialScale = null;
+                }
+                if (Object.keys(this.touches).length === 0) {
+                    this.isOrbiting = false;
+                }
+            },
+
+            onWheel: function (e) {
+                e.preventDefault();
+                const current = this.el.getAttribute('scale').x;
+                const factor = e.deltaY < 0 ? 1.05 : 0.95;
+                let newScale = current * factor;
+                newScale = Math.max(this.minScale, Math.min(this.maxScale, newScale));
+                this.el.setAttribute('scale', { x: newScale, y: newScale, z: newScale });
+            },
+
+            remove: function () {
+                this.canvas.removeEventListener('touchstart', this.onTouchStart);
+                this.canvas.removeEventListener('touchmove', this.onTouchMove);
+                this.canvas.removeEventListener('touchend', this.onTouchEnd);
+                this.canvas.removeEventListener('wheel', this.onWheel);
+            }
+        });
+    </script>
+
+    <!-- Gestion du chargement de modèle et boutons -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const modelEntity = document.getElementById('model');
+            const fileInput = document.getElementById('file-upload');
+            const statusDiv = document.getElementById('status');
+
+            fileInput.addEventListener('change', function (e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                const url = URL.createObjectURL(file);
+                statusDiv.textContent = '⏳ Chargement...';
+                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-yellow-400');
+
+                modelEntity.setAttribute('gltf-model', '');
+                modelEntity.setAttribute('gltf-model', url);
+
+                modelEntity.addEventListener('model-loaded', function onLoad() {
+                    statusDiv.textContent = '✅ Modèle : ' + file.name;
+                    statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+                    modelEntity.removeEventListener('model-loaded', onLoad);
+                }, { once: true });
+
+                modelEntity.addEventListener('model-error', function onError(err) {
+                    statusDiv.textContent = '❌ Erreur de chargement';
+                    statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-red-400');
+                    console.error('Erreur modèle:', err);
+                    modelEntity.removeEventListener('model-error', onError);
+                }, { once: true });
+            });
+
+            document.getElementById('reset-orientation-btn').addEventListener('click', function () {
+                modelEntity.setAttribute('rotation', '0 0 0');
+                statusDiv.textContent = '↺ Orientation réinitialisée';
+                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+            });
+            document.getElementById('small-btn').addEventListener('click', function () {
+                modelEntity.setAttribute('scale', '0.2 0.2 0.2');
+                statusDiv.textContent = '🔍 Petit modèle';
+                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+            });
+            document.getElementById('normal-btn').addEventListener('click', function () {
+                modelEntity.setAttribute('scale', '0.5 0.5 0.5');
+                statusDiv.textContent = '📏 Taille normale';
+                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+            });
+            document.getElementById('big-btn').addEventListener('click', function () {
+                modelEntity.setAttribute('scale', '1 1 1');
+                statusDiv.textContent = '🔎 Grand modèle';
+                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+            });
+        });
+    </script>
+</body>
+</html>
