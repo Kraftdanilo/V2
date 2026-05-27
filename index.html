@@ -5,20 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
     <title>AR Viewer · Hiro Optimisé</title>
 
-    <!-- Tailwind CSS via CDN -->
+    <!-- Tailwind CSS (CDN) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* Ajustements supplémentaires si nécessaire */
-        body { touch-action: none; }
+        body { touch-action: none; margin: 0; overflow: hidden; }
         canvas { display: block; }
+        /* Correction des couleurs de statut dynamique */
+        .status-text { transition: color 0.2s; }
     </style>
+
+    <!-- A-Frame + AR.js (chargés AVANT la scène) -->
+    <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+    <!-- CDN officiel AR.js (au lieu de raw.githack.com, plus fiable) -->
+    <script src="https://cdn.jsdelivr.net/npm/ar.js@2.2.2/aframe/build/aframe-ar.js"></script>
 </head>
 <body class="m-0 overflow-hidden font-sans bg-black">
 
     <!-- Statut en haut à droite -->
     <div id="status"
-         class="fixed top-4 right-4 z-50 bg-black/70 text-green-400 px-4 py-2 rounded-full text-sm backdrop-blur-md shadow-lg">
-        📷 Caméra active · Hiro
+         class="status-text fixed top-4 right-4 z-50 bg-black/70 text-green-400 px-4 py-2 rounded-full text-sm backdrop-blur-md shadow-lg">
+        📷 Prêt · Scanner le marqueur Hiro
     </div>
 
     <!-- Interface de contrôle en bas -->
@@ -49,19 +55,12 @@
         </button>
     </div>
 
-    <!-- Scène AR avec paramètres de tracking optimisés -->
+    <!-- Scène AR – paramètres simplifiés et compatibles avec le marqueur Hiro -->
     <a-scene embedded
-             arjs="trackingMethod: best;
-                   sourceType: webcam;
-                   detectionMode: mono_and_matrix;
-                   matrixCodeType: 3x3;
-                   maxDetectionRate: 30;
-                   canvasWidth: 640;
-                   canvasHeight: 480;
-                   debugUIEnabled: false;">
-        <!-- Marqueur Hiro -->
+             arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;">
+        <!-- Marqueur Hiro (pattern) -->
         <a-marker preset="hiro" id="marker">
-            <!-- Modèle 3D avec gestion des gestes -->
+            <!-- Modèle 3D avec gestion des gestes (rotation + pincement) -->
             <a-entity id="model"
                       position="0 0 0"
                       scale="0.5 0.5 0.5"
@@ -69,14 +68,11 @@
                       gesture-controls>
             </a-entity>
         </a-marker>
-        <a-entity camera></a-entity>
+
+        <!-- La caméra est automatiquement gérée par AR.js, pas besoin de balise <a-entity camera> -->
     </a-scene>
 
-    <!-- Dépendances A-Frame et AR.js -->
-    <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-
-    <!-- Composant personnalisé : orbite + pincement -->
+    <!-- Composant personnalisé : orbite (rotation) + pincement (zoom) -->
     <script>
         AFRAME.registerComponent('gesture-controls', {
             init: function () {
@@ -85,26 +81,34 @@
                 this.maxScale = 5.0;
                 this.initialScale = null;
 
+                // Liaison des méthodes
                 this.onTouchStart = this.onTouchStart.bind(this);
                 this.onTouchMove = this.onTouchMove.bind(this);
                 this.onTouchEnd = this.onTouchEnd.bind(this);
                 this.onWheel = this.onWheel.bind(this);
 
-                this.canvas = this.el.sceneEl.canvas;
-                this.canvas.addEventListener('touchstart', this.onTouchStart, { passive: false });
-                this.canvas.addEventListener('touchmove', this.onTouchMove, { passive: false });
-                this.canvas.addEventListener('touchend', this.onTouchEnd);
-                this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
+                // Attendre que le canvas de la scène soit disponible
+                const scene = this.el.sceneEl;
+                if (scene && scene.canvas) {
+                    this.attachEvents(scene.canvas);
+                } else {
+                    scene.addEventListener('renderstart', () => {
+                        this.attachEvents(scene.canvas);
+                    });
+                }
+            },
 
-                this.touches = {};
-                this.isOrbiting = false;
-                this.lastOrbitX = 0;
-                this.lastOrbitY = 0;
-                this.pinchStartDistance = null;
+            attachEvents: function (canvas) {
+                this.canvas = canvas;
+                canvas.addEventListener('touchstart', this.onTouchStart, { passive: false });
+                canvas.addEventListener('touchmove', this.onTouchMove, { passive: false });
+                canvas.addEventListener('touchend', this.onTouchEnd);
+                canvas.addEventListener('wheel', this.onWheel, { passive: false });
             },
 
             onTouchStart: function (e) {
                 e.preventDefault();
+                // Mémorisation des touches actives
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const touch = e.changedTouches[i];
                     this.touches[touch.identifier] = { x: touch.clientX, y: touch.clientY };
@@ -127,6 +131,7 @@
 
             onTouchMove: function (e) {
                 e.preventDefault();
+                // Mise à jour des positions
                 for (let i = 0; i < e.changedTouches.length; i++) {
                     const touch = e.changedTouches[i];
                     if (this.touches[touch.identifier]) {
@@ -181,64 +186,91 @@
             },
 
             remove: function () {
-                this.canvas.removeEventListener('touchstart', this.onTouchStart);
-                this.canvas.removeEventListener('touchmove', this.onTouchMove);
-                this.canvas.removeEventListener('touchend', this.onTouchEnd);
-                this.canvas.removeEventListener('wheel', this.onWheel);
-            }
+                if (this.canvas) {
+                    this.canvas.removeEventListener('touchstart', this.onTouchStart);
+                    this.canvas.removeEventListener('touchmove', this.onTouchMove);
+                    this.canvas.removeEventListener('touchend', this.onTouchEnd);
+                    this.canvas.removeEventListener('wheel', this.onWheel);
+                }
+            },
+
+            // Initialisation des propriétés utilisées dans les handlers
+            touches: {},
+            isOrbiting: false,
+            lastOrbitX: 0,
+            lastOrbitY: 0,
+            pinchStartDistance: null
         });
     </script>
 
-    <!-- Gestion du chargement de modèle et boutons -->
+    <!-- Gestion du chargement de modèle + boutons UI -->
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             const modelEntity = document.getElementById('model');
             const fileInput = document.getElementById('file-upload');
             const statusDiv = document.getElementById('status');
+            let currentObjectURL = null;
+
+            // Fonction utilitaire pour changer le statut avec couleur
+            function setStatus(text, colorClass) {
+                statusDiv.textContent = text;
+                // Supprime toutes les classes de couleur et ajoute la nouvelle
+                statusDiv.classList.remove('text-green-400', 'text-red-400', 'text-yellow-400');
+                statusDiv.classList.add(colorClass);
+            }
 
             fileInput.addEventListener('change', function (e) {
                 const file = e.target.files[0];
                 if (!file) return;
+
+                // Nettoyer l'ancien object URL pour éviter les fuites mémoire
+                if (currentObjectURL) {
+                    URL.revokeObjectURL(currentObjectURL);
+                    currentObjectURL = null;
+                }
+
                 const url = URL.createObjectURL(file);
-                statusDiv.textContent = '⏳ Chargement...';
-                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-yellow-400');
+                currentObjectURL = url;
 
+                setStatus('⏳ Chargement...', 'text-yellow-400');
+
+                // Supprimer l'ancien modèle pour forcer le rechargement
                 modelEntity.setAttribute('gltf-model', '');
-                modelEntity.setAttribute('gltf-model', url);
 
-                modelEntity.addEventListener('model-loaded', function onLoad() {
-                    statusDiv.textContent = '✅ Modèle : ' + file.name;
-                    statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+                // Ajouter les écouteurs AVANT de définir le modèle (évite de manquer l'événement)
+                const onLoad = function () {
+                    setStatus('✅ Modèle : ' + file.name, 'text-green-400');
                     modelEntity.removeEventListener('model-loaded', onLoad);
-                }, { once: true });
-
-                modelEntity.addEventListener('model-error', function onError(err) {
-                    statusDiv.textContent = '❌ Erreur de chargement';
-                    statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-red-400');
+                };
+                const onError = function (err) {
+                    setStatus('❌ Erreur de chargement', 'text-red-400');
                     console.error('Erreur modèle:', err);
                     modelEntity.removeEventListener('model-error', onError);
-                }, { once: true });
+                };
+                modelEntity.addEventListener('model-loaded', onLoad, { once: true });
+                modelEntity.addEventListener('model-error', onError, { once: true });
+
+                // Charger le nouveau modèle
+                modelEntity.setAttribute('gltf-model', url);
             });
 
+            // Bouton Reset : réinitialise rotation et scale par défaut
             document.getElementById('reset-orientation-btn').addEventListener('click', function () {
                 modelEntity.setAttribute('rotation', '0 0 0');
-                statusDiv.textContent = '↺ Orientation réinitialisée';
-                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+                modelEntity.setAttribute('scale', '0.5 0.5 0.5');
+                setStatus('↺ Orientation et taille réinitialisées', 'text-green-400');
             });
             document.getElementById('small-btn').addEventListener('click', function () {
                 modelEntity.setAttribute('scale', '0.2 0.2 0.2');
-                statusDiv.textContent = '🔍 Petit modèle';
-                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+                setStatus('🔍 Petit modèle', 'text-green-400');
             });
             document.getElementById('normal-btn').addEventListener('click', function () {
                 modelEntity.setAttribute('scale', '0.5 0.5 0.5');
-                statusDiv.textContent = '📏 Taille normale';
-                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+                setStatus('📏 Taille normale', 'text-green-400');
             });
             document.getElementById('big-btn').addEventListener('click', function () {
                 modelEntity.setAttribute('scale', '1 1 1');
-                statusDiv.textContent = '🔎 Grand modèle';
-                statusDiv.className = statusDiv.className.replace(/text-\S+/, 'text-green-400');
+                setStatus('🔎 Grand modèle', 'text-green-400');
             });
         });
     </script>
